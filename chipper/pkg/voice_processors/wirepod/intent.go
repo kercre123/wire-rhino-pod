@@ -3,20 +3,15 @@ package wirepod
 import (
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/digital-dream-labs/chipper/pkg/vtt"
 
-	leopard "github.com/Picovoice/leopard/binding/go"
 	rhino "github.com/Picovoice/rhino/binding/go/v2"
 	opus "github.com/digital-dream-labs/opus-go/opus"
 )
-
-var leopardSTT leopard.Leopard
 
 var debugLogging bool
 
@@ -38,16 +33,9 @@ func check(e error) {
 
 func (s *Server) ProcessIntent(req *vtt.IntentRequest) (*vtt.IntentResponse, error) {
 	var voiceTimer int = 0
-	var transcription1 string = ""
-	var transcription2 string = ""
-	var transcribedText string
 	var isOpus bool
-	var micDataLeopard []int16
 	var micDataRhino [][]int16
 	var die bool = false
-	var doSTT bool = true
-	var sayStarting = true
-	var leopardSTT leopard.Leopard
 	var rhinoSTI rhino.Rhino
 	var numInRange int = 0
 	var oldDataLength int = 0
@@ -82,26 +70,13 @@ func (s *Server) ProcessIntent(req *vtt.IntentRequest) (*vtt.IntentResponse, err
 		}
 		disableLiveTranscription = true
 	}
-	if justThisBotNum == 1 {
-		leopardSTT = leopardSTT1
-		rhinoSTI = rhinoSTI1
-	} else if justThisBotNum == 2 {
-		leopardSTT = leopardSTT2
-		rhinoSTI = rhinoSTI2
-	} else if justThisBotNum == 3 {
-		leopardSTT = leopardSTT3
-		rhinoSTI = rhinoSTI3
-	} else if justThisBotNum == 4 {
-		leopardSTT = leopardSTT4
-		rhinoSTI = rhinoSTI4
-	} else if justThisBotNum == 5 {
-		leopardSTT = leopardSTT5
-		rhinoSTI = rhinoSTI5
-	} else {
+	if botNum > picovoiceInstances {
 		fmt.Println("Too many bots are connected, sending error to bot " + strconv.Itoa(justThisBotNum))
 		IntentPass(req, "intent_system_noaudio", "Too many bots, max is 5", map[string]string{"error": "EOF"}, true, justThisBotNum)
 		botNum = botNum - 1
 		return nil, nil
+	} else {
+		rhinoSTI = rhinoSTIArray[botNum-1]
 	}
 	if debugLogging == true {
 		fmt.Println("Bot " + strconv.Itoa(justThisBotNum) + " ESN: " + req.Device)
@@ -136,94 +111,6 @@ func (s *Server) ProcessIntent(req *vtt.IntentRequest) (*vtt.IntentResponse, err
 			time.Sleep(time.Millisecond * 750)
 		}
 	}()
-	go func() {
-		if botNum > 1 {
-			disableLiveTranscription = true
-		}
-		for doSTT == true {
-			if micDataLeopard != nil && die == false && voiceTimer > 0 {
-				if leopardFallback == true {
-					if sayStarting == true {
-						if debugLogging == true {
-							fmt.Println("No intent was transcribed, falling back to leopard")
-							fmt.Printf("Transcribing stream %d...\n", justThisBotNum)
-						}
-						sayStarting = false
-					}
-					processOneData := micDataLeopard
-					transcription1Raw, err := leopardSTT.Process(processOneData)
-					if err != nil {
-						log.Println(err)
-					}
-					transcription1 = strings.ToLower(transcription1Raw)
-					if debugLogging == true {
-						if disableLiveTranscription == false {
-							fmt.Println("Bot " + strconv.Itoa(justThisBotNum) + " Transcription: " + transcription1)
-						}
-					}
-					if transcription1 != "" && transcription2 != "" && transcription1 == transcription2 {
-						transcribedText = transcription1
-						if debugLogging == true {
-							if disableLiveTranscription == true {
-								fmt.Printf("\n")
-							} else {
-								fmt.Println("Bot " + strconv.Itoa(justThisBotNum) + " Transcription: " + transcribedText)
-							}
-						}
-						die = true
-						break
-					} else if voiceTimer == 7 {
-						transcribedText = transcription2
-						if debugLogging == true {
-							if disableLiveTranscription == true {
-								fmt.Printf("\n")
-							} else {
-								fmt.Println("Bot " + strconv.Itoa(justThisBotNum) + " Transcription: " + transcribedText)
-							}
-						}
-						die = true
-						break
-					}
-					time.Sleep(time.Millisecond * 300)
-					processTwoData := micDataLeopard
-					transcription2Raw, err := leopardSTT.Process(processTwoData)
-					if err != nil {
-						log.Println(err)
-					}
-					transcription2 = strings.ToLower(transcription2Raw)
-					if debugLogging == true {
-						if disableLiveTranscription == false {
-							fmt.Println("Bot " + strconv.Itoa(justThisBotNum) + " Transcription: " + transcription2)
-						}
-					}
-					if transcription1 != "" && transcription2 != "" && transcription1 == transcription2 {
-						transcribedText = transcription1
-						if debugLogging == true {
-							if disableLiveTranscription == true {
-								fmt.Printf("\n")
-							} else {
-								fmt.Println("Bot " + strconv.Itoa(justThisBotNum) + " Transcription: " + transcribedText)
-							}
-						}
-						die = true
-						break
-					} else if voiceTimer == 7 {
-						transcribedText = transcription2
-						if debugLogging == true {
-							if disableLiveTranscription == true {
-								fmt.Printf("\n")
-							} else {
-								fmt.Println("Bot " + strconv.Itoa(justThisBotNum) + " Transcription: " + transcribedText)
-							}
-						}
-						die = true
-						break
-					}
-					time.Sleep(time.Millisecond * 300)
-				}
-			}
-		}
-	}()
 	for {
 		chunk, err := req.Stream.Recv()
 		if err != nil {
@@ -237,7 +124,6 @@ func (s *Server) ProcessIntent(req *vtt.IntentRequest) (*vtt.IntentResponse, err
 		}
 		data = append(data, chunk.InputAudio...)
 		// returns []int16, framesize unknown
-		micDataLeopard = bytesToIntLeopard(stream, data, die, isOpus)
 		// returns [][]int16, 512 framesize
 		micDataRhino = bytesToIntRhino(stream, data, die, isOpus)
 		numInRange = 0
@@ -280,7 +166,7 @@ func (s *Server) ProcessIntent(req *vtt.IntentRequest) (*vtt.IntentResponse, err
 		}
 	}
 	if leopardFallback == true {
-		successMatched = processTextAll(req, transcribedText, matchListList, intentsList, isOpus, justThisBotNum)
+		successMatched = processTextAll(req, "good robot", matchListList, intentsList, isOpus, justThisBotNum)
 	} else {
 		successMatched = true
 		paramCheckerSlots(req, transcribedIntent, transcribedSlots, isOpus, justThisBotNum)
@@ -289,7 +175,7 @@ func (s *Server) ProcessIntent(req *vtt.IntentRequest) (*vtt.IntentResponse, err
 		if debugLogging == true {
 			fmt.Println("No intent was matched.")
 		}
-		IntentPass(req, "intent_system_noaudio", transcribedText, map[string]string{"": ""}, false, justThisBotNum)
+		IntentPass(req, "intent_system_noaudio", "no", map[string]string{"": ""}, false, justThisBotNum)
 	}
 	botNum = botNum - 1
 	return nil, nil
